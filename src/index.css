@@ -262,6 +262,8 @@ button {
   font-weight: 500;
   color: var(--text-secondary);
   border: 1px solid var(--border-color);
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 .tool-btn-labeled:hover {
   color: var(--text-primary);

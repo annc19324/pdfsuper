@@ -181,6 +181,7 @@ export default function App() {
   const [editorViewport, setEditorViewport] = useState(null);
   const editorCanvasRef = useRef(null);
   const drawingAreaRef = useRef(null);
+  const editorContainerRef = useRef(null);
 
   // Drawing state
   const [drawingBox, setDrawingBox] = useState(null);
@@ -198,6 +199,29 @@ export default function App() {
       setToasts(prev => prev.filter(t => t.id !== id));
     }, 4500);
   };
+
+  // Handle mouse wheel zoom directly
+  useEffect(() => {
+    const container = editorContainerRef.current;
+    if (!container) return;
+
+    const handleWheel = (e) => {
+      e.preventDefault();
+      const delta = e.deltaY;
+      if (delta < 0) {
+        // Zoom in smoothly
+        setZoom(z => Math.min(3.0, z + 0.08));
+      } else {
+        // Zoom out smoothly
+        setZoom(z => Math.max(0.5, z - 0.08));
+      }
+    };
+
+    container.addEventListener('wheel', handleWheel, { passive: false });
+    return () => {
+      container.removeEventListener('wheel', handleWheel);
+    };
+  }, []);
 
   // Get active page
   const currentPage = useMemo(() => {
@@ -1167,11 +1191,10 @@ export default function App() {
                 >
                   <Square size={16} /> Xóa che màu
                 </button>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '4px', width: '100%' }}>
+                <div style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
                   <button 
                     className={`tool-btn-labeled ${tool === 'inpaint' ? 'active' : ''}`}
                     onClick={() => { setTool('inpaint'); setSelectedAnnId(null); }}
-                    style={{ flex: 1 }}
                   >
                     <Sparkles size={16} /> Xóa hòa nhập
                   </button>
@@ -1323,7 +1346,7 @@ export default function App() {
             </div>
 
             {/* Canvas Editor Container */}
-            <div className="app-editor-container" onClick={() => setSelectedAnnId(null)}>
+            <div ref={editorContainerRef} className="app-editor-container" onClick={() => setSelectedAnnId(null)}>
               {currentPage && (
                 <div 
                   className="editor-workspace-wrapper"
