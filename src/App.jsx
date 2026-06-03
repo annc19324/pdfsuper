@@ -69,6 +69,15 @@ const TikTokIcon = ({ size = 16 }) => (
   </svg>
 );
 
+// Sub-component for Help SVG Icon
+const HelpIcon = ({ size = 16 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-help-circle">
+    <circle cx="12" cy="12" r="10" />
+    <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
+    <line x1="12" y1="17" x2="12.01" y2="17" />
+  </svg>
+);
+
 // Sub-component: Renders individual page thumbnail in the sidebar
 function ThumbnailCanvas({ pdfDoc, pageConfig }) {
   const canvasRef = useRef(null);
@@ -161,6 +170,9 @@ export default function App() {
 
   // Support / Donation QR modal
   const [showSupportModal, setShowSupportModal] = useState(false);
+
+  // Inpaint Help modal
+  const [showInpaintHelpModal, setShowInpaintHelpModal] = useState(false);
 
   // Toast notifications state
   const [toasts, setToasts] = useState([]);
@@ -841,6 +853,56 @@ export default function App() {
         </div>
       )}
 
+      {/* Inpaint Help Modal */}
+      {showInpaintHelpModal && (
+        <div className="loading-overlay" style={{ cursor: 'default', zIndex: 1000 }} onClick={() => setShowInpaintHelpModal(false)}>
+          <div 
+            className="upload-card" 
+            style={{ maxWidth: '780px', width: '95%', padding: '24px', border: '1px solid var(--border-color)', position: 'relative' }}
+            onClick={e => e.stopPropagation()}
+          >
+            <button 
+              className="modal-close-btn" 
+              style={{ position: 'absolute', top: 16, right: 16, background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer' }}
+              onClick={() => setShowInpaintHelpModal(false)}
+            >
+              <X size={20} />
+            </button>
+            <h2 style={{ fontSize: '18px', marginBottom: '8px', color: 'white', textAlign: 'center' }}>Hướng dẫn xóa hòa nhập hoàn hảo</h2>
+            <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '20px', textAlign: 'center', lineHeight: '1.4' }}>
+              Thuật toán Bilinear Coons Patch hoạt động tốt nhất khi bạn vẽ khung chọn bao quanh rộng hơn logo từ 3-5px để lấy chính xác màu sắc của nền xung quanh.
+            </p>
+            
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px', marginBottom: '20px' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
+                <div style={{ width: '100%', aspectRatio: '4/3', borderRadius: '8px', overflow: 'hidden', border: '1px solid var(--border-color)', background: 'var(--bg-main)' }}>
+                  <img src="/inpaint_step1.png" alt="Bước 1" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+                </div>
+                <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-primary)' }}>1. Logo gốc trên nền</span>
+              </div>
+              
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
+                <div style={{ width: '100%', aspectRatio: '4/3', borderRadius: '8px', overflow: 'hidden', border: '1px solid var(--border-color)', background: 'var(--bg-main)' }}>
+                  <img src="/inpaint_step2.png" alt="Bước 2" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+                </div>
+                <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-primary)' }}>2. Vẽ viền rộng hơn 3-5px</span>
+              </div>
+              
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
+                <div style={{ width: '100%', aspectRatio: '4/3', borderRadius: '8px', overflow: 'hidden', border: '1px solid var(--border-color)', background: 'var(--bg-main)' }}>
+                  <img src="/inpaint_step3.png" alt="Bước 3" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+                </div>
+                <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-primary)' }}>3. Nền tự động hòa hợp</span>
+              </div>
+            </div>
+            
+            <button className="btn-primary" style={{ width: '100%', justifyContent: 'center' }} onClick={() => setShowInpaintHelpModal(false)}>
+              Đã hiểu, tiếp tục chỉnh sửa
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <header className="app-header">
         <div className="logo-section">
@@ -1105,12 +1167,36 @@ export default function App() {
                 >
                   <Square size={16} /> Xóa che màu
                 </button>
-                <button 
-                  className={`tool-btn-labeled ${tool === 'inpaint' ? 'active' : ''}`}
-                  onClick={() => { setTool('inpaint'); setSelectedAnnId(null); }}
-                >
-                  <Sparkles size={16} /> Xóa hòa nhập
-                </button>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '4px', width: '100%' }}>
+                  <button 
+                    className={`tool-btn-labeled ${tool === 'inpaint' ? 'active' : ''}`}
+                    onClick={() => { setTool('inpaint'); setSelectedAnnId(null); }}
+                    style={{ flex: 1 }}
+                  >
+                    <Sparkles size={16} /> Xóa hòa nhập
+                  </button>
+                  <button 
+                    className="help-btn"
+                    onClick={() => setShowInpaintHelpModal(true)}
+                    title="Hướng dẫn xóa hòa nhập hiệu quả nhất"
+                    style={{
+                      padding: '8px',
+                      borderRadius: '8px',
+                      border: '1px solid var(--border-color)',
+                      backgroundColor: 'var(--bg-panel-hover)',
+                      color: 'var(--text-secondary)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      cursor: 'pointer',
+                      height: '38px',
+                      width: '38px',
+                      transition: 'all var(--transition-fast)'
+                    }}
+                  >
+                    <HelpIcon size={16} />
+                  </button>
+                </div>
               </div>
 
               {/* Color Customization picker */}
