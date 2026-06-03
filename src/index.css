@@ -554,12 +554,13 @@ input:checked + .slider:before {
   border-radius: 4px;
   background-color: white;
   transition: transform var(--transition-normal);
+  flex-shrink: 0;
 }
 
 /* PDF Pages Viewer Canvas */
 .editor-page-canvas {
   display: block;
-  max-width: 100%;
+  max-width: none;
 }
 
 /* Interactive SVG/Div overlay for drawing */

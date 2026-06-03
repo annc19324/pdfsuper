@@ -138,7 +138,7 @@ export default function App() {
   const [pdfjsDoc, setPdfjsDoc] = useState(null); // pdfjs object
   const [pages, setPages] = useState([]); // List of page configs
   const [currentPageId, setCurrentPageId] = useState('');
-  const [zoom, setZoom] = useState(1.5);
+  const [zoom, setZoom] = useState(1.0);
   const [tool, setTool] = useState('view'); // 'view' | 'highlight' | 'solid-highlight' | 'solid' | 'inpaint'
   
   // Collapsible panels
