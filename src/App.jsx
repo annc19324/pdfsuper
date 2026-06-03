@@ -97,7 +97,7 @@ function ThumbnailCanvas({ pdfDoc, pageConfig }) {
     const renderThumbnail = async () => {
       try {
         const page = await pdfDoc.getPage(pageConfig.originalIndex);
-        const viewport = page.getViewport({ scale: 0.2, rotation: pageConfig.rotation });
+        const viewport = page.getViewport({ scale: 0.5, rotation: pageConfig.rotation });
         
         if (!active) return;
         canvas.width = viewport.width;
@@ -562,6 +562,8 @@ export default function App() {
       
       if (tool === 'highlight') {
         createAnnotation('highlight', pdfRect, highlightColor);
+      } else if (tool === 'text-highlight') {
+        createAnnotation('text-highlight', pdfRect, highlightColor);
       } else if (tool === 'solid-highlight') {
         createAnnotation('solid-highlight', pdfRect, highlightColor);
       } else if (tool === 'solid') {
@@ -843,7 +845,7 @@ export default function App() {
             <img 
               src="/logo.png" 
               alt="Logo" 
-              style={{ width: '22px', height: '22px', objectFit: 'contain' }} 
+              style={{ width: '26px', height: '26px', objectFit: 'contain' }} 
               onError={(e) => {
                 e.target.onerror = null;
                 // fallback to a generic logo styling if logo.png doesn't load
@@ -860,24 +862,24 @@ export default function App() {
         {/* Contact Links & Support Row */}
         <div className="header-contacts-container">
           <div className="social-links-row">
-            <a href="https://facebook.com/annc19324" target="_blank" rel="noopener noreferrer" className="contact-item" title="Facebook">
-              <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/></svg>
+            <a href="https://facebook.com/annc19324" target="_blank" rel="noopener noreferrer" className="contact-item facebook" title="Facebook">
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/></svg>
             </a>
-            <a href="https://www.tiktok.com/@annc19324" target="_blank" rel="noopener noreferrer" className="contact-item" title="TikTok">
-              <TikTokIcon size={16} />
+            <a href="https://www.tiktok.com/@annc19324" target="_blank" rel="noopener noreferrer" className="contact-item tiktok" title="TikTok">
+              <TikTokIcon size={20} />
             </a>
-            <a href="https://www.youtube.com/@annc19324" target="_blank" rel="noopener noreferrer" className="contact-item" title="YouTube">
-              <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.377.505 9.377.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/></svg>
+            <a href="https://www.youtube.com/@annc19324" target="_blank" rel="noopener noreferrer" className="contact-item youtube" title="YouTube">
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.377.505 9.377.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/></svg>
             </a>
             
             <div className="contact-divider"></div>
             
-            <a href="mailto:annc19324@gmail.com" className="contact-item text-item" title="Mail: annc19324@gmail.com">
-              <Mail size={15} />
+            <a href="mailto:annc19324@gmail.com" className="contact-item text-item email" title="Mail: annc19324@gmail.com">
+              <Mail size={17} />
               <span>annc19324@gmail.com</span>
             </a>
-            <a href="tel:0337090061" className="contact-item text-item" title="SĐT: 0337090061">
-              <Phone size={15} />
+            <a href="tel:0337090061" className="contact-item text-item phone" title="SĐT: 0337090061">
+              <Phone size={17} />
               <span>0337090061</span>
             </a>
           </div>
@@ -1081,6 +1083,13 @@ export default function App() {
                   <Highlighter size={16} /> Highlight trộn
                 </button>
                 <button 
+                  className={`tool-btn-labeled ${tool === 'text-highlight' ? 'active' : ''}`}
+                  onClick={() => { setTool('text-highlight'); setSelectedAnnId(null); }}
+                  title="Tô màu đậm vẽ dưới chữ giúp chữ rõ nét"
+                >
+                  <Highlighter size={16} style={{ transform: 'rotate(90deg)' }} /> Highlight rõ chữ
+                </button>
+                <button 
                   className={`tool-btn-labeled ${tool === 'solid-highlight' ? 'active' : ''}`}
                   onClick={() => { setTool('solid-highlight'); setSelectedAnnId(null); }}
                   title="Tô màu vàng đậm nguyên bản đè lên nền"
@@ -1102,12 +1111,12 @@ export default function App() {
               </div>
 
               {/* Color Customization picker */}
-              {(tool === 'highlight' || tool === 'solid-highlight' || tool === 'solid') && (
+              {(tool === 'highlight' || tool === 'text-highlight' || tool === 'solid-highlight' || tool === 'solid') && (
                 <>
                   <div className="toolbar-divider"></div>
                   <div className="toolbar-group">
                     <span className="toolbar-label">Màu sắc:</span>
-                    {(tool === 'highlight' || tool === 'solid-highlight') && (
+                    {(tool === 'highlight' || tool === 'text-highlight' || tool === 'solid-highlight') && (
                       <div className="color-picker-wrapper">
                         <input 
                           type="color" 
@@ -1249,7 +1258,8 @@ export default function App() {
                     {/* Render existing annotations */}
                     {mappedAnnotations.map(ann => {
                       const isSelected = ann.id === selectedAnnId;
-                      const isHighlightType = ann.type === 'highlight' || ann.type === 'solid-highlight';
+                      const isHighlightType = ann.type === 'highlight' || ann.type === 'solid-highlight' || ann.type === 'text-highlight';
+                      const isMultiplyBlend = ann.type === 'highlight' || ann.type === 'text-highlight';
                       const shouldShowFrame = showAnnotationFrames || isSelected;
                       
                       let borderStyle = 'none';
@@ -1272,10 +1282,10 @@ export default function App() {
                             top: `${ann.top}px`,
                             width: `${ann.width}px`,
                             height: `${ann.height}px`,
-                            mixBlendMode: isHighlightType ? 'multiply' : 'normal',
+                            mixBlendMode: isMultiplyBlend ? 'multiply' : 'normal',
                             backgroundColor: ann.type === 'highlight' 
                               ? hexToRgba(ann.color || '#EFDE05', 0.35) 
-                              : (ann.type === 'solid-highlight' ? hexToRgba(ann.color || '#EFDE05', 0.9) : (ann.type === 'solid-erase' ? ann.color : 'transparent')),
+                              : (ann.type === 'text-highlight' ? hexToRgba(ann.color || '#EFDE05', 0.8) : (ann.type === 'solid-highlight' ? hexToRgba(ann.color || '#EFDE05', 0.9) : (ann.type === 'solid-erase' ? ann.color : 'transparent'))),
                             border: borderStyle,
                             pointerEvents: showAnnotationFrames ? 'auto' : 'none'
                           }}
@@ -1363,13 +1373,14 @@ export default function App() {
                 <div className="edit-ann-panel">
                   <div className="edit-ann-title">
                     {selectedAnn.type === 'highlight' && 'Loại nét: Highlight trộn'}
+                    {selectedAnn.type === 'text-highlight' && 'Loại nét: Highlight rõ chữ'}
                     {selectedAnn.type === 'solid-highlight' && 'Loại nét: Highlight đè'}
                     {selectedAnn.type === 'solid-erase' && 'Loại nét: Che màu nền'}
                     {selectedAnn.type === 'inpaint-erase' && 'Loại nét: Xóa hòa nhập'}
                   </div>
                   
                   {/* Color picker for vector types */}
-                  {(selectedAnn.type === 'highlight' || selectedAnn.type === 'solid-highlight' || selectedAnn.type === 'solid-erase') && (
+                  {(selectedAnn.type === 'highlight' || selectedAnn.type === 'text-highlight' || selectedAnn.type === 'solid-highlight' || selectedAnn.type === 'solid-erase') && (
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px' }}>
                       <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Đổi màu:</span>
                       <div className="color-picker-wrapper" style={{ padding: '2px 6px' }}>
@@ -1474,20 +1485,7 @@ export default function App() {
               </div>
             </div>
 
-            {/* Instruction Help box */}
-            <div className="panel-section" style={{ backgroundColor: 'rgba(255,255,255,0.01)', borderBottom: 'none' }}>
-              <h3 className="panel-section-title" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                Hướng dẫn nhanh
-              </h3>
-              <ul style={{ fontSize: '12px', color: 'var(--text-secondary)', paddingLeft: '16px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                <li><b>Hiện viền sửa</b>: Tắt đi để xem bản in PDF gốc sạch viền. Bật lên để click chọn, chỉnh sửa hoặc xóa nét vẽ.</li>
-                <li><b>Highlight trộn</b>: Màu nhạt bôi đè lên chữ (mặc định: #EFDE05), màu trộn với nền.</li>
-                <li><b>Highlight đè</b>: Màu vàng đậm nguyên bản sáng rực, đè lên nền nhưng chữ vẫn nổi rõ.</li>
-                <li><b>Xóa che màu</b>: Đè màu đặc (mặc định trắng) che logo.</li>
-                <li><b>Xóa hòa nhập</b>: Vẽ hộp quanh logo để hòa tan tự nhiên vào màu nền gradient.</li>
-              </ul>
-            </div>
-          </aside>
+        </aside>
 
         </div>
       )}

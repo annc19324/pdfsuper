@@ -96,10 +96,10 @@ button {
 }
 
 .logo-icon {
-  width: 36px;
-  height: 36px;
+  width: 40px;
+  height: 40px;
   background: var(--accent-gradient);
-  border-radius: 10px;
+  border-radius: 12px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -857,7 +857,7 @@ input:checked + .slider:before {
 /* Toast System Styling */
 .toast-container {
   position: fixed;
-  bottom: 24px;
+  top: 24px;
   right: 24px;
   display: flex;
   flex-direction: column;
@@ -904,7 +904,7 @@ input:checked + .slider:before {
 
 @keyframes toast-in {
   from {
-    transform: translateY(20px) scale(0.95);
+    transform: translateY(-20px) scale(0.95);
     opacity: 0;
   }
   to {
@@ -964,6 +964,34 @@ input:checked + .slider:before {
 
 .contact-item:hover {
   color: var(--text-primary);
+}
+
+.contact-item.facebook:hover {
+  color: #1877f2;
+  filter: drop-shadow(0 0 6px rgba(24, 119, 242, 0.8));
+  transform: scale(1.1);
+}
+
+.contact-item.tiktok:hover {
+  color: #ffffff;
+  filter: drop-shadow(0 0 6px rgba(255, 255, 255, 0.8));
+  transform: scale(1.1);
+}
+
+.contact-item.youtube:hover {
+  color: #ff0000;
+  filter: drop-shadow(0 0 6px rgba(255, 0, 0, 0.8));
+  transform: scale(1.1);
+}
+
+.contact-item.email:hover {
+  color: var(--accent-primary);
+  filter: drop-shadow(0 0 6px rgba(99, 102, 241, 0.8));
+}
+
+.contact-item.phone:hover {
+  color: #10b981;
+  filter: drop-shadow(0 0 6px rgba(16, 185, 129, 0.8));
 }
 
 .contact-item svg {

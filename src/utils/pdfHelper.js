@@ -72,6 +72,17 @@ export async function exportPdf(originalPdfBytes, pagesConfig) {
             color: rgb(r, g, b),
             opacity: 0.4, // Standard highlight transparency
           });
+        } else if (type === 'text-highlight') {
+          const { r, g, b } = hexToRgb(color || '#EFDE05');
+          dstPage.drawRectangle({
+            x,
+            y,
+            width: w,
+            height: h,
+            color: rgb(r, g, b),
+            opacity: 0.95, // Solid highlight color
+            prepend: true,  // Draw behind text content stream
+          });
         } else if (type === 'solid-highlight') {
           const { r, g, b } = hexToRgb(color || '#EFDE05');
           dstPage.drawRectangle({
