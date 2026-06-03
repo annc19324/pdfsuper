@@ -178,7 +178,10 @@ export default function App() {
   // Custom Toast helper
   const showToast = (message, type = 'info') => {
     const id = generateId();
-    setToasts(prev => [...prev, { id, message, type }]);
+    setToasts(prev => {
+      const next = [...prev, { id, message, type }];
+      return next.slice(-3); // Only show the 3 newest toasts
+    });
     setTimeout(() => {
       setToasts(prev => prev.filter(t => t.id !== id));
     }, 4500);
