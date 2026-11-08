@@ -1,4 +1,17 @@
-import { PDFDocument, rgb, degrees } from 'pdf-lib';
+import { 
+  PDFDocument, 
+  rgb, 
+  degrees, 
+  BlendMode, 
+  pushGraphicsState, 
+  popGraphicsState, 
+  setGraphicsState, 
+  setFillingColor, 
+  moveTo, 
+  lineTo, 
+  closePath, 
+  fill 
+} from 'pdf-lib';
 
 // Helper to convert hex (#ffffff) to RGB (0-1)
 export function hexToRgb(hex) {
@@ -103,6 +116,46 @@ export async function exportPdf(originalPdfBytes, pagesConfig) {
             color: rgb(r, g, b),
             opacity: 1.0,
           });
+        } else if (type === 'quad-highlight') {
+          // Perspective Quad-Point Highlight
+          if (imageSrc) {
+            // Pre-rendered luminance mask raster overlay
+            try {
+              const imgBytes = base64ToUint8Array(imageSrc);
+              const embeddedImage = await dstDoc.embedPng(imgBytes);
+              dstPage.drawImage(embeddedImage, {
+                x,
+                y,
+                width: w,
+                height: h,
+              });
+            } catch (err) {
+              console.error('Failed to embed quad-highlight raster overlay:', err);
+            }
+          } else if (ann.points && ann.points.length >= 4) {
+            // Native vector polygon with Multiply blend mode
+            // Multiply blend preserves 100% of underlying dark text ink
+            const { r, g, b } = hexToRgb(color || '#FFF176');
+            const opacity = typeof ann.opacity === 'number' ? ann.opacity : 0.65;
+            const gs = dstPage.maybeEmbedGraphicsState({
+              opacity,
+              blendMode: BlendMode.Multiply,
+            });
+
+            const [p0, p1, p2, p3] = ann.points;
+            dstPage.pushOperators(
+              pushGraphicsState(),
+              setGraphicsState(gs),
+              setFillingColor(rgb(r, g, b)),
+              moveTo(p0.x, p0.y),
+              lineTo(p1.x, p1.y),
+              lineTo(p2.x, p2.y),
+              lineTo(p3.x, p3.y),
+              closePath(),
+              fill(),
+              popGraphicsState()
+            );
+          }
         } else if (type === 'inpaint-erase' && imageSrc) {
           try {
             const imgBytes = base64ToUint8Array(imageSrc);

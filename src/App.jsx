@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { 
   Upload, 
   Download, 
@@ -33,6 +33,12 @@ import * as pdfjsLib from 'pdfjs-dist';
 // Utilities
 import { exportPdf, hexToRgb } from './utils/pdfHelper';
 import { inpaintLaplacian } from './utils/inpaint';
+import { 
+  orderQuadPoints, 
+  getPointsBounds, 
+  applyLuminanceMask, 
+  HIGHLIGHT_PRESET_COLORS 
+} from './utils/quadHighlight';
 
 // Configure PDF.js Worker using Vite's asset URL import
 import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
@@ -75,6 +81,27 @@ const HelpIcon = ({ size = 16 }) => (
     <circle cx="12" cy="12" r="10" />
     <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
     <line x1="12" y1="17" x2="12.01" y2="17" />
+  </svg>
+);
+
+// Sub-component for Quad-Point Highlighter SVG Icon
+const QuadIcon = ({ size = 16, style = {} }) => (
+  <svg 
+    width={size} 
+    height={size} 
+    viewBox="0 0 24 24" 
+    fill="none" 
+    stroke="currentColor" 
+    strokeWidth="2" 
+    strokeLinecap="round" 
+    strokeLinejoin="round" 
+    style={style}
+  >
+    <polygon points="4 7 19 4 21 17 5 20" fill="currentColor" fillOpacity="0.25" />
+    <circle cx="4" cy="7" r="1.8" fill="currentColor" />
+    <circle cx="19" cy="4" r="1.8" fill="currentColor" />
+    <circle cx="21" cy="17" r="1.8" fill="currentColor" />
+    <circle cx="5" cy="20" r="1.8" fill="currentColor" />
   </svg>
 );
 
@@ -148,6 +175,14 @@ export default function App() {
   // Customization Options
   const [highlightColor, setHighlightColor] = useState('#EFDE05'); // Default highlight color
   const [eraseColor, setEraseColor] = useState('#ffffff'); // White default
+
+  // Quad-Point Highlighter Options
+  const [quadHighlightColor, setQuadHighlightColor] = useState('#FFF176'); // Fluorescent yellow default
+  const [quadOpacity, setQuadOpacity] = useState(0.65); // Default opacity
+  const [quadBlendMode, setQuadBlendMode] = useState('multiply'); // 'multiply' | 'luminance'
+  const [quadThreshold, setQuadThreshold] = useState(120); // Default luminance threshold
+  const [quadPointsInProgress, setQuadPointsInProgress] = useState([]); // Array of 0 to 3 points {x, y}
+  const [currentMousePos, setCurrentMousePos] = useState({ x: 0, y: 0 });
   
   // Selected Annotation ID for color editing / deletion
   const [selectedAnnId, setSelectedAnnId] = useState(null);
@@ -382,11 +417,27 @@ export default function App() {
     }
   };
 
-  // Mapped annotations for absolute CSS rendering
+  // Mapped annotations for absolute CSS / SVG rendering
   const mappedAnnotations = useMemo(() => {
     if (!editorViewport || !currentPage || !currentPage.annotations) return [];
     
     return currentPage.annotations.map(ann => {
+      if (ann.type === 'quad-highlight' && ann.points && ann.points.length >= 4) {
+        const screenPoints = ann.points.map(pt => {
+          const sp = editorViewport.convertToViewportPoint(pt.x, pt.y);
+          return { x: sp[0], y: sp[1] };
+        });
+        const bounds = getPointsBounds(screenPoints);
+        return {
+          ...ann,
+          screenPoints,
+          left: bounds.minX,
+          top: bounds.minY,
+          width: bounds.w,
+          height: bounds.h
+        };
+      }
+
       const p1 = editorViewport.convertToViewportPoint(ann.rect.x, ann.rect.y);
       const p2 = editorViewport.convertToViewportPoint(ann.rect.x + ann.rect.w, ann.rect.y + ann.rect.h);
       
@@ -406,7 +457,7 @@ export default function App() {
   }, [currentPage?.annotations, editorViewport]);
 
   // Create an annotation on current page and sync to selected pages
-  const createAnnotation = async (type, pdfRect, color, imageSrc = null) => {
+  const createAnnotation = async (type, pdfRect, color, imageSrc = null, extraProps = {}) => {
     saveToHistory();
     const annId = generateId();
     const syncGroupId = generateId(); // Unique ID to link synchronized edits together
@@ -417,7 +468,8 @@ export default function App() {
       type,
       rect: pdfRect,
       color,
-      imageSrc
+      imageSrc,
+      ...extraProps
     };
     
     // Add to current page
@@ -488,7 +540,8 @@ export default function App() {
                 syncGroupId,
                 type,
                 rect: pdfRect,
-                color
+                color,
+                ...extraProps
               }]
             };
           }
@@ -497,10 +550,11 @@ export default function App() {
         showToast(`Đã đồng bộ nét sửa đến ${targetPageIdsForSync.length} trang khác.`, 'success');
       }
     }
+    return annId;
   };
 
   // Delete specific annotation (and synchronized group if editing in sync mode)
-  const deleteAnnotation = (pageId, annId) => {
+  const deleteAnnotation = useCallback((pageId, annId) => {
     saveToHistory();
     const pageObj = pages.find(p => p.id === pageId);
     const annObj = pageObj?.annotations.find(a => a.id === annId);
@@ -525,7 +579,7 @@ export default function App() {
     if (selectedAnnId === annId) {
       setSelectedAnnId(null);
     }
-  };
+  }, [pages, syncEdits, targetPageIdsForSync, selectedAnnId]);
 
   // Update annotation properties (Color), sync'ing color edits to group copies if in sync mode
   const updateAnnotationColor = (newColor) => {
@@ -537,13 +591,13 @@ export default function App() {
       if (syncEdits && sGroupId && (p.id === currentPageId || targetPageIdsForSync.includes(p.id))) {
         return {
           ...p,
-          annotations: p.annotations.map(a => a.syncGroupId === sGroupId ? { ...a, color: newColor } : a)
+          annotations: p.annotations.map(a => a.syncGroupId === sGroupId ? { ...a, color: newColor, imageSrc: a.type === 'quad-highlight' && a.blendMode === 'luminance' ? null : a.imageSrc } : a)
         };
       }
       if (p.id === currentPageId) {
         return {
           ...p,
-          annotations: p.annotations.map(a => a.id === selectedAnnId ? { ...a, color: newColor } : a)
+          annotations: p.annotations.map(a => a.id === selectedAnnId ? { ...a, color: newColor, imageSrc: a.type === 'quad-highlight' && a.blendMode === 'luminance' ? null : a.imageSrc } : a)
         };
       }
       return p;
@@ -551,13 +605,302 @@ export default function App() {
     showToast('Đã cập nhật màu sắc của nét sửa.', 'success');
   };
 
+  // Update annotation opacity
+  const updateAnnotationOpacity = (newOpacity) => {
+    if (!currentPageId || !selectedAnnId) return;
+    setPages(prevPages => prevPages.map(p => {
+      if (p.id === currentPageId) {
+        return {
+          ...p,
+          annotations: p.annotations.map(a => a.id === selectedAnnId ? { ...a, opacity: newOpacity } : a)
+        };
+      }
+      return p;
+    }));
+  };
+
+  // Corner handle dragging for Quad-Point Highlight
+  const handlePointHandleMouseDown = (e, annId, pointIndex) => {
+    e.stopPropagation();
+    e.preventDefault();
+    setSelectedAnnId(annId);
+
+    const onMouseMove = (moveEvent) => {
+      moveEvent.preventDefault();
+      if (!drawingAreaRef.current || !editorViewport) return;
+      const rect = drawingAreaRef.current.getBoundingClientRect();
+      const currentScreenX = moveEvent.clientX - rect.left;
+      const currentScreenY = moveEvent.clientY - rect.top;
+
+      const [pdfX, pdfY] = editorViewport.convertToPdfPoint(currentScreenX, currentScreenY);
+
+      setPages(prevPages => prevPages.map(p => {
+        if (p.id === currentPageId) {
+          return {
+            ...p,
+            annotations: p.annotations.map(a => {
+              if (a.id === annId && a.points) {
+                const newPoints = [...a.points];
+                newPoints[pointIndex] = { x: pdfX, y: pdfY };
+                const bounds = getPointsBounds(newPoints);
+                return {
+                  ...a,
+                  points: newPoints,
+                  rect: { x: bounds.minX, y: bounds.minY, w: bounds.w, h: bounds.h },
+                  imageSrc: a.blendMode === 'luminance' ? null : a.imageSrc
+                };
+              }
+              return a;
+            })
+          };
+        }
+        return p;
+      }));
+    };
+
+    const onMouseUp = () => {
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+      saveToHistory();
+    };
+
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
+  };
+
+  // Dragging entire quad body
+  const handleQuadBodyMouseDown = (e, annId) => {
+    e.stopPropagation();
+    e.preventDefault();
+    setSelectedAnnId(annId);
+
+    const startClientX = e.clientX;
+    const startClientY = e.clientY;
+
+    const ann = currentPage?.annotations.find(a => a.id === annId);
+    if (!ann || !ann.points) return;
+    const initialPoints = ann.points.map(p => ({ ...p }));
+
+    const onMouseMove = (moveEvent) => {
+      moveEvent.preventDefault();
+      if (!drawingAreaRef.current || !editorViewport) return;
+
+      const deltaX = moveEvent.clientX - startClientX;
+      const deltaY = moveEvent.clientY - startClientY;
+
+      const pOrigin = editorViewport.convertToPdfPoint(0, 0);
+      const pDelta = editorViewport.convertToPdfPoint(deltaX, deltaY);
+      const dPdfX = pDelta[0] - pOrigin[0];
+      const dPdfY = pDelta[1] - pOrigin[1];
+
+      setPages(prevPages => prevPages.map(p => {
+        if (p.id === currentPageId) {
+          return {
+            ...p,
+            annotations: p.annotations.map(a => {
+              if (a.id === annId && a.points) {
+                const newPoints = initialPoints.map(pt => ({
+                  x: pt.x + dPdfX,
+                  y: pt.y + dPdfY
+                }));
+                const bounds = getPointsBounds(newPoints);
+                return {
+                  ...a,
+                  points: newPoints,
+                  rect: { x: bounds.minX, y: bounds.minY, w: bounds.w, h: bounds.h },
+                  imageSrc: a.blendMode === 'luminance' ? null : a.imageSrc
+                };
+              }
+              return a;
+            })
+          };
+        }
+        return p;
+      }));
+    };
+
+    const onMouseUp = () => {
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+      saveToHistory();
+    };
+
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
+  };
+
+  // Auto reorder quad points into standard convex order
+  const handleReorderQuadPoints = (annId) => {
+    if (!currentPageId) return;
+    saveToHistory();
+    setPages(prevPages => prevPages.map(p => {
+      if (p.id === currentPageId) {
+        return {
+          ...p,
+          annotations: p.annotations.map(a => {
+            if (a.id === annId && a.points) {
+              const reordered = orderQuadPoints(a.points);
+              return { ...a, points: reordered };
+            }
+            return a;
+          })
+        };
+      }
+      return p;
+    }));
+    showToast('Đã tự động sắp xếp lại 4 đỉnh theo thứ tự chuẩn.', 'success');
+  };
+
+  // Run pixel luminance masking for Quad Highlight (Algorithm Option 2)
+  const handleApplyLuminanceMask = (annId, threshold = 120) => {
+    const ann = currentPage?.annotations.find(a => a.id === annId);
+    if (!ann || !ann.points || !editorCanvasRef.current || !editorViewport) return;
+
+    const screenPoints = ann.points.map(pt => {
+      const sp = editorViewport.convertToViewportPoint(pt.x, pt.y);
+      return { x: sp[0], y: sp[1] };
+    });
+
+    const maskResult = applyLuminanceMask(
+      editorCanvasRef.current,
+      screenPoints,
+      ann.color || quadHighlightColor,
+      threshold,
+      ann.opacity !== undefined ? ann.opacity : quadOpacity
+    );
+
+    if (maskResult) {
+      saveToHistory();
+      setPages(prevPages => prevPages.map(p => {
+        if (p.id === currentPageId) {
+          return {
+            ...p,
+            annotations: p.annotations.map(a => {
+              if (a.id === annId) {
+                return {
+                  ...a,
+                  blendMode: 'luminance',
+                  threshold,
+                  imageSrc: maskResult.dataUrl
+                };
+              }
+              return a;
+            })
+          };
+        }
+        return p;
+      }));
+      showToast('Đã áp dụng quét pixel lọc ngưỡng Luminance (giữ chữ đen)!', 'success');
+    }
+  };
+
+  // Revert back to real-time Multiply Vector blend mode
+  const handleRevertToMultiplyBlend = (annId) => {
+    saveToHistory();
+    setPages(prevPages => prevPages.map(p => {
+      if (p.id === currentPageId) {
+        return {
+          ...p,
+          annotations: p.annotations.map(a => {
+            if (a.id === annId) {
+              return {
+                ...a,
+                blendMode: 'multiply',
+                imageSrc: null
+              };
+            }
+            return a;
+          })
+        };
+      }
+      return p;
+    }));
+    showToast('Đã chuyển sang chế độ hòa trộn Multiply Vector mượt mà!', 'info');
+  };
+
+  // Global keydown handler for Escape (cancel 4-point selection) and Delete (delete selected annotation)
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        if (quadPointsInProgress.length > 0) {
+          setQuadPointsInProgress([]);
+          showToast('Đã hủy vẽ tứ giác.', 'info');
+        } else if (selectedAnnId) {
+          setSelectedAnnId(null);
+        }
+      } else if (e.key === 'Delete' || e.key === 'Backspace') {
+        const isInput = ['INPUT', 'TEXTAREA'].includes(document.activeElement?.tagName);
+        if (selectedAnnId && currentPageId && !isInput) {
+          deleteAnnotation(currentPageId, selectedAnnId);
+          showToast('Đã xóa nét sửa.', 'info');
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [quadPointsInProgress, selectedAnnId, currentPageId, deleteAnnotation]);
+
   // Drawing Event Handlers
   const handleMouseDown = (e) => {
     if (tool === 'view' || !editorViewport) return;
     const rect = drawingAreaRef.current.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
-    
+
+    if (tool === 'quad-highlight') {
+      const newPts = [...quadPointsInProgress, { x, y }];
+      if (newPts.length < 4) {
+        setQuadPointsInProgress(newPts);
+      } else {
+        // Complete Quad!
+        const ordered = orderQuadPoints(newPts);
+        const pdfPoints = ordered.map(pt => {
+          const [px, py] = editorViewport.convertToPdfPoint(pt.x, pt.y);
+          return { x: px, y: py };
+        });
+        const bounds = getPointsBounds(pdfPoints);
+
+        let initialImageSrc = null;
+        if (quadBlendMode === 'luminance' && editorCanvasRef.current) {
+          const maskResult = applyLuminanceMask(
+            editorCanvasRef.current,
+            ordered,
+            quadHighlightColor,
+            quadThreshold,
+            quadOpacity
+          );
+          if (maskResult) {
+            initialImageSrc = maskResult.dataUrl;
+          }
+        }
+
+        createAnnotation(
+          'quad-highlight',
+          {
+            x: bounds.minX,
+            y: bounds.minY,
+            w: bounds.w,
+            h: bounds.h
+          },
+          quadHighlightColor,
+          initialImageSrc,
+          {
+            points: pdfPoints,
+            opacity: quadOpacity,
+            blendMode: quadBlendMode,
+            threshold: quadThreshold
+          }
+        ).then(newAnnId => {
+          if (newAnnId) setSelectedAnnId(newAnnId);
+        });
+
+        setQuadPointsInProgress([]);
+        showToast('Đã tạo Highlight 4 điểm! Bạn có thể kéo các đỉnh A, B, C, D để căn chỉnh.', 'success');
+      }
+      return;
+    }
+
     isDrawingRef.current = true;
     startPosRef.current = { x, y };
     setDrawingBox({ x, y, w: 0, h: 0 });
@@ -565,10 +908,17 @@ export default function App() {
   };
 
   const handleMouseMove = (e) => {
-    if (!isDrawingRef.current || !drawingBox) return;
+    if (!editorViewport || !drawingAreaRef.current) return;
     const rect = drawingAreaRef.current.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
+
+    if (tool === 'quad-highlight') {
+      setCurrentMousePos({ x, y });
+      return;
+    }
+
+    if (!isDrawingRef.current || !drawingBox) return;
     
     const startX = startPosRef.current.x;
     const startY = startPosRef.current.y;
@@ -582,6 +932,7 @@ export default function App() {
   };
 
   const handleMouseUp = async () => {
+    if (tool === 'quad-highlight') return;
     if (!isDrawingRef.current) return;
     isDrawingRef.current = false;
     
@@ -1160,41 +1511,49 @@ export default function App() {
                 <span className="toolbar-label">Công cụ:</span>
                 <button 
                   className={`tool-btn-labeled ${tool === 'view' ? 'active' : ''}`}
-                  onClick={() => { setTool('view'); setSelectedAnnId(null); }}
+                  onClick={() => { setTool('view'); setSelectedAnnId(null); setQuadPointsInProgress([]); }}
                 >
                   <Eye size={16} /> Xem
                 </button>
                 <button 
                   className={`tool-btn-labeled ${tool === 'highlight' ? 'active' : ''}`}
-                  onClick={() => { setTool('highlight'); setSelectedAnnId(null); }}
+                  onClick={() => { setTool('highlight'); setSelectedAnnId(null); setQuadPointsInProgress([]); }}
                   title="Tô màu mờ trộn với nền văn bản"
                 >
                   <Highlighter size={16} /> Highlight trộn
                 </button>
                 <button 
                   className={`tool-btn-labeled ${tool === 'text-highlight' ? 'active' : ''}`}
-                  onClick={() => { setTool('text-highlight'); setSelectedAnnId(null); }}
+                  onClick={() => { setTool('text-highlight'); setSelectedAnnId(null); setQuadPointsInProgress([]); }}
                   title="Tô màu đậm vẽ dưới chữ giúp chữ rõ nét"
                 >
                   <Highlighter size={16} style={{ transform: 'rotate(90deg)' }} /> Highlight rõ chữ
                 </button>
                 <button 
                   className={`tool-btn-labeled ${tool === 'solid-highlight' ? 'active' : ''}`}
-                  onClick={() => { setTool('solid-highlight'); setSelectedAnnId(null); }}
+                  onClick={() => { setTool('solid-highlight'); setSelectedAnnId(null); setQuadPointsInProgress([]); }}
                   title="Tô màu vàng đậm nguyên bản đè lên nền"
                 >
                   <Paintbrush size={16} /> Highlight đè
                 </button>
                 <button 
+                  className={`tool-btn-labeled ${tool === 'quad-highlight' ? 'active' : ''}`}
+                  onClick={() => { setTool('quad-highlight'); setSelectedAnnId(null); setQuadPointsInProgress([]); }}
+                  title="Highlight 4 điểm (Quad/Phối cảnh) cho dòng & ô bảng bị nghiêng lệch góc"
+                  style={tool === 'quad-highlight' ? { borderColor: '#FFF176' } : {}}
+                >
+                  <QuadIcon size={16} /> Quad Highlight
+                </button>
+                <button 
                   className={`tool-btn-labeled ${tool === 'solid' ? 'active' : ''}`}
-                  onClick={() => { setTool('solid'); setSelectedAnnId(null); }}
+                  onClick={() => { setTool('solid'); setSelectedAnnId(null); setQuadPointsInProgress([]); }}
                 >
                   <Square size={16} /> Xóa che màu
                 </button>
                 <div style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
                   <button 
                     className={`tool-btn-labeled ${tool === 'inpaint' ? 'active' : ''}`}
-                    onClick={() => { setTool('inpaint'); setSelectedAnnId(null); }}
+                    onClick={() => { setTool('inpaint'); setSelectedAnnId(null); setQuadPointsInProgress([]); }}
                   >
                     <Sparkles size={16} /> Xóa hòa nhập
                   </button>
@@ -1248,6 +1607,94 @@ export default function App() {
                           onChange={(e) => setEraseColor(e.target.value)} 
                         />
                         <span style={{ fontSize: 13, fontWeight: 500 }}>Màu che</span>
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
+
+              {/* Quad-Point Highlight Customization Settings */}
+              {tool === 'quad-highlight' && (
+                <>
+                  <div className="toolbar-divider"></div>
+                  <div className="toolbar-group">
+                    <span className="toolbar-label">Màu Quad:</span>
+                    <div className="color-picker-wrapper" title="Bảng chọn màu tùy chỉnh">
+                      <input 
+                        type="color" 
+                        className="color-input" 
+                        value={quadHighlightColor} 
+                        onChange={(e) => setQuadHighlightColor(e.target.value)} 
+                      />
+                      <span style={{ fontSize: 12, fontWeight: 600 }}>{quadHighlightColor}</span>
+                    </div>
+
+                    {/* Quick Preset Palette */}
+                    <div className="color-presets-row" style={{ marginLeft: '4px' }}>
+                      {HIGHLIGHT_PRESET_COLORS.map(c => (
+                        <div
+                          key={c.value}
+                          className={`color-preset-chip ${quadHighlightColor.toLowerCase() === c.value.toLowerCase() ? 'active' : ''}`}
+                          style={{ backgroundColor: c.value }}
+                          onClick={() => setQuadHighlightColor(c.value)}
+                          title={`${c.label} (${c.value})`}
+                        />
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="toolbar-divider"></div>
+                  <div className="toolbar-group">
+                    <span className="toolbar-label">Độ mờ:</span>
+                    <div className="setting-slider-row" style={{ width: 110 }}>
+                      <input 
+                        type="range"
+                        min="0.25"
+                        max="0.95"
+                        step="0.05"
+                        value={quadOpacity}
+                        onChange={(e) => setQuadOpacity(parseFloat(e.target.value))}
+                        className="setting-slider"
+                      />
+                      <span style={{ fontSize: 12, minWidth: 30, color: 'var(--text-secondary)' }}>
+                        {Math.round(quadOpacity * 100)}%
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="toolbar-divider"></div>
+                  <div className="toolbar-group">
+                    <span className="toolbar-label">Thuật toán:</span>
+                    <button
+                      className={`tool-btn-labeled ${quadBlendMode === 'multiply' ? 'active' : ''}`}
+                      style={{ height: 32, fontSize: 12, padding: '0 8px' }}
+                      onClick={() => setQuadBlendMode('multiply')}
+                      title="Chế độ hòa trộn Multiply: Giữ 100% mực chữ đen, nền giấy biến thành màu highlight"
+                    >
+                      Multiply (Mượt)
+                    </button>
+                    <button
+                      className={`tool-btn-labeled ${quadBlendMode === 'luminance' ? 'active' : ''}`}
+                      style={{ height: 32, fontSize: 12, padding: '0 8px' }}
+                      onClick={() => setQuadBlendMode('luminance')}
+                      title="Chế độ quét pixel lọc ngưỡng Luminance (L < Threshold giữ chữ đen)"
+                    >
+                      Lọc chữ đen (Pixel)
+                    </button>
+
+                    {quadBlendMode === 'luminance' && (
+                      <div className="setting-slider-row" style={{ width: 120, marginLeft: 4 }}>
+                        <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Ngưỡng:</span>
+                        <input 
+                          type="range"
+                          min="60"
+                          max="200"
+                          step="5"
+                          value={quadThreshold}
+                          onChange={(e) => setQuadThreshold(parseInt(e.target.value, 10))}
+                          className="setting-slider"
+                        />
+                        <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>{quadThreshold}</span>
                       </div>
                     )}
                   </div>
@@ -1367,8 +1814,46 @@ export default function App() {
                     onMouseMove={handleMouseMove}
                     onMouseUp={handleMouseUp}
                   >
-                    {/* Render existing annotations */}
-                    {mappedAnnotations.map(ann => {
+                    {/* Floating Guide Banner for Quad-Point Tool */}
+                    {tool === 'quad-highlight' && (
+                      <div className="quad-guide-banner">
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <QuadIcon size={16} style={{ color: quadHighlightColor }} />
+                          <span>
+                            {quadPointsInProgress.length === 0 && 'Nhấp chuột chọn điểm A (Góc 1) trên dòng/ô nghiêng'}
+                            {quadPointsInProgress.length === 1 && 'Nhấp chọn điểm B (Góc 2)'}
+                            {quadPointsInProgress.length === 2 && 'Nhấp chọn điểm C (Góc 3)'}
+                            {quadPointsInProgress.length === 3 && 'Nhấp chọn điểm D (Góc 4) để chốt vùng highlight'}
+                          </span>
+                        </div>
+                        <div className="quad-guide-steps">
+                          {['A', 'B', 'C', 'D'].map((letter, idx) => (
+                            <div 
+                              key={letter}
+                              className={`quad-step-dot ${quadPointsInProgress.length > idx ? 'completed' : (quadPointsInProgress.length === idx ? 'active' : '')}`}
+                            >
+                              {letter}
+                            </div>
+                          ))}
+                        </div>
+                        {quadPointsInProgress.length > 0 && (
+                          <button 
+                            className="quad-banner-cancel-btn"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setQuadPointsInProgress([]);
+                              showToast('Đã hủy vẽ tứ giác.', 'info');
+                            }}
+                            title="Hủy vẽ (Phím Esc)"
+                          >
+                            <X size={12} /> Hủy (Esc)
+                          </button>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Render existing rectangular annotations */}
+                    {mappedAnnotations.filter(ann => ann.type !== 'quad-highlight').map(ann => {
                       const isSelected = ann.id === selectedAnnId;
                       const isHighlightType = ann.type === 'highlight' || ann.type === 'solid-highlight' || ann.type === 'text-highlight';
                       const isMultiplyBlend = ann.type === 'highlight' || ann.type === 'text-highlight';
@@ -1427,6 +1912,176 @@ export default function App() {
                         </div>
                       );
                     })}
+
+                    {/* SVG Layer for Quad-Point Highlights (Perspective Polygons & Interactive Handles) */}
+                    <svg className="quad-svg-overlay">
+                      {/* Render existing Quad-Point Highlight annotations */}
+                      {mappedAnnotations.filter(ann => ann.type === 'quad-highlight' && ann.screenPoints && ann.screenPoints.length >= 4).map(ann => {
+                        const isSelected = ann.id === selectedAnnId;
+                        const shouldShowHandles = isSelected || showAnnotationFrames;
+                        const pts = ann.screenPoints;
+                        const ptsString = pts.map(p => `${p.x},${p.y}`).join(' ');
+
+                        return (
+                          <g key={ann.id}>
+                            {/* Luminance mask raster overlay if applied */}
+                            {ann.imageSrc && (
+                              <image
+                                href={ann.imageSrc}
+                                x={ann.left}
+                                y={ann.top}
+                                width={ann.width}
+                                height={ann.height}
+                                preserveAspectRatio="none"
+                              />
+                            )}
+
+                            {/* Anti-aliased Vector Quadrilateral */}
+                            <polygon
+                              points={ptsString}
+                              fill={ann.imageSrc ? 'transparent' : (ann.color || '#FFF176')}
+                              fillOpacity={ann.opacity !== undefined ? ann.opacity : 0.65}
+                              stroke={isSelected ? '#6366f1' : (shouldShowHandles ? (ann.color || '#FFF176') : 'none')}
+                              strokeWidth={isSelected ? 2 : 1}
+                              strokeDasharray={isSelected ? '4,4' : (shouldShowHandles ? '3,3' : 'none')}
+                              className="quad-polygon-body"
+                              style={{
+                                mixBlendMode: ann.blendMode === 'multiply' || !ann.blendMode ? 'multiply' : 'normal',
+                                pointerEvents: (shouldShowHandles || tool === 'view' || (tool === 'quad-highlight' && quadPointsInProgress.length === 0)) ? 'auto' : 'none'
+                              }}
+                              onMouseDown={(e) => {
+                                if (tool === 'quad-highlight' && quadPointsInProgress.length > 0) return;
+                                handleQuadBodyMouseDown(e, ann.id);
+                              }}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setSelectedAnnId(ann.id);
+                              }}
+                            />
+
+                            {/* Draggable Corner Handles (A, B, C, D) */}
+                            {shouldShowHandles && pts.map((pt, idx) => (
+                              <g
+                                key={`quad-h-${ann.id}-${idx}`}
+                                className="quad-handle-group"
+                                onMouseDown={(e) => handlePointHandleMouseDown(e, ann.id, idx)}
+                                title={`Kéo góc ${['A', 'B', 'C', 'D'][idx]} để căn chỉnh`}
+                              >
+                                <circle
+                                  cx={pt.x}
+                                  cy={pt.y}
+                                  r={9}
+                                  className="quad-handle-circle"
+                                  fill={isSelected ? '#6366f1' : (ann.color || '#FFF176')}
+                                />
+                                <text
+                                  x={pt.x}
+                                  y={pt.y}
+                                  className="quad-handle-text"
+                                >
+                                  {['A', 'B', 'C', 'D'][idx]}
+                                </text>
+                              </g>
+                            ))}
+                          </g>
+                        );
+                      })}
+
+                      {/* In-Progress Guide Lines & Corner Points while user is clicking 4 points */}
+                      {tool === 'quad-highlight' && quadPointsInProgress.length > 0 && (
+                        <g>
+                          {/* Segment lines between placed points */}
+                          {quadPointsInProgress.map((pt, i) => {
+                            if (i === 0) return null;
+                            const prev = quadPointsInProgress[i - 1];
+                            return (
+                              <line
+                                key={`inprog-line-${i}`}
+                                x1={prev.x}
+                                y1={prev.y}
+                                x2={pt.x}
+                                y2={pt.y}
+                                stroke="#6366f1"
+                                strokeWidth={2}
+                              />
+                            );
+                          })}
+
+                          {/* Rubberband dashed line to current cursor */}
+                          <line
+                            x1={quadPointsInProgress[quadPointsInProgress.length - 1].x}
+                            y1={quadPointsInProgress[quadPointsInProgress.length - 1].y}
+                            x2={currentMousePos.x}
+                            y2={currentMousePos.y}
+                            stroke="#6366f1"
+                            strokeWidth={1.5}
+                            strokeDasharray="4,4"
+                          />
+
+                          {/* When 3 points are placed, show closing preview to point A */}
+                          {quadPointsInProgress.length === 3 && (
+                            <>
+                              <line
+                                x1={currentMousePos.x}
+                                y1={currentMousePos.y}
+                                x2={quadPointsInProgress[0].x}
+                                y2={quadPointsInProgress[0].y}
+                                stroke="#6366f1"
+                                strokeWidth={1.5}
+                                strokeDasharray="4,4"
+                              />
+                              <polygon
+                                points={`${quadPointsInProgress[0].x},${quadPointsInProgress[0].y} ${quadPointsInProgress[1].x},${quadPointsInProgress[1].y} ${quadPointsInProgress[2].x},${quadPointsInProgress[2].y} ${currentMousePos.x},${currentMousePos.y}`}
+                                fill={quadHighlightColor}
+                                fillOpacity={quadOpacity * 0.5}
+                                style={{ mixBlendMode: 'multiply' }}
+                              />
+                            </>
+                          )}
+
+                          {/* Badges for already placed points (A, B, C) */}
+                          {quadPointsInProgress.map((pt, i) => (
+                            <g key={`inprog-pin-${i}`}>
+                              <circle
+                                cx={pt.x}
+                                cy={pt.y}
+                                r={10}
+                                fill="#10b981"
+                                stroke="#ffffff"
+                                strokeWidth={2}
+                              />
+                              <text
+                                x={pt.x}
+                                y={pt.y}
+                                className="quad-handle-text"
+                              >
+                                {['A', 'B', 'C'][i]}
+                              </text>
+                            </g>
+                          ))}
+
+                          {/* Active cursor badge showing next point letter */}
+                          <g>
+                            <circle
+                              cx={currentMousePos.x}
+                              cy={currentMousePos.y}
+                              r={10}
+                              fill="#6366f1"
+                              stroke="#ffffff"
+                              strokeWidth={2}
+                              strokeDasharray="2,2"
+                            />
+                            <text
+                              x={currentMousePos.x}
+                              y={currentMousePos.y}
+                              className="quad-handle-text"
+                            >
+                              {['A', 'B', 'C', 'D'][quadPointsInProgress.length]}
+                            </text>
+                          </g>
+                        </g>
+                      )}
+                    </svg>
 
                     {/* Dotted indicator box while drawing */}
                     {drawingBox && (
@@ -1489,21 +2144,115 @@ export default function App() {
                     {selectedAnn.type === 'solid-highlight' && 'Loại nét: Highlight đè'}
                     {selectedAnn.type === 'solid-erase' && 'Loại nét: Che màu nền'}
                     {selectedAnn.type === 'inpaint-erase' && 'Loại nét: Xóa hòa nhập'}
+                    {selectedAnn.type === 'quad-highlight' && 'Loại nét: Highlight 4 điểm (Quad)'}
                   </div>
                   
-                  {/* Color picker for vector types */}
-                  {(selectedAnn.type === 'highlight' || selectedAnn.type === 'text-highlight' || selectedAnn.type === 'solid-highlight' || selectedAnn.type === 'solid-erase') && (
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px' }}>
-                      <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Đổi màu:</span>
-                      <div className="color-picker-wrapper" style={{ padding: '2px 6px' }}>
-                        <input 
-                          type="color" 
-                          className="color-input" 
-                          style={{ width: '20px', height: '20px' }}
-                          value={selectedAnn.color || (selectedAnn.type === 'solid-erase' ? '#ffffff' : '#EFDE05')} 
-                          onChange={(e) => updateAnnotationColor(e.target.value)} 
-                        />
+                  {/* Color picker for vector and quad types */}
+                  {(selectedAnn.type === 'highlight' || selectedAnn.type === 'text-highlight' || selectedAnn.type === 'solid-highlight' || selectedAnn.type === 'solid-erase' || selectedAnn.type === 'quad-highlight') && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '8px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px' }}>
+                        <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Đổi màu:</span>
+                        <div className="color-picker-wrapper" style={{ padding: '2px 6px' }}>
+                          <input 
+                            type="color" 
+                            className="color-input" 
+                            style={{ width: '20px', height: '20px' }}
+                            value={selectedAnn.color || (selectedAnn.type === 'solid-erase' ? '#ffffff' : '#FFF176')} 
+                            onChange={(e) => updateAnnotationColor(e.target.value)} 
+                          />
+                        </div>
                       </div>
+
+                      {selectedAnn.type === 'quad-highlight' && (
+                        <div className="color-presets-row" style={{ justifyContent: 'flex-end' }}>
+                          {HIGHLIGHT_PRESET_COLORS.map(c => (
+                            <div
+                              key={c.value}
+                              className={`color-preset-chip ${selectedAnn.color?.toLowerCase() === c.value.toLowerCase() ? 'active' : ''}`}
+                              style={{ backgroundColor: c.value, width: 18, height: 18 }}
+                              onClick={() => updateAnnotationColor(c.value)}
+                              title={c.label}
+                            />
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Quad-Point Highlight Specific Properties */}
+                  {selectedAnn.type === 'quad-highlight' && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '8px', padding: '8px', backgroundColor: 'var(--bg-panel-hover)', borderRadius: '6px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
+                        <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Độ trong suốt:</span>
+                        <div className="setting-slider-row" style={{ width: 110 }}>
+                          <input 
+                            type="range"
+                            min="0.25"
+                            max="0.95"
+                            step="0.05"
+                            value={selectedAnn.opacity !== undefined ? selectedAnn.opacity : 0.65}
+                            onChange={(e) => updateAnnotationOpacity(parseFloat(e.target.value))}
+                            className="setting-slider"
+                          />
+                          <span style={{ fontSize: '11px', color: 'var(--text-secondary)', minWidth: 28 }}>
+                            {Math.round((selectedAnn.opacity !== undefined ? selectedAnn.opacity : 0.65) * 100)}%
+                          </span>
+                        </div>
+                      </div>
+
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
+                        <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Thuật toán:</span>
+                        <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--accent-primary)' }}>
+                          {selectedAnn.blendMode === 'luminance' ? 'Lọc ngưỡng Pixel' : 'Multiply Vector'}
+                        </span>
+                      </div>
+
+                      {selectedAnn.blendMode === 'luminance' ? (
+                        <>
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '6px' }}>
+                            <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Ngưỡng mực:</span>
+                            <input 
+                              type="range"
+                              min="60"
+                              max="200"
+                              step="5"
+                              value={selectedAnn.threshold || 120}
+                              onChange={(e) => {
+                                const th = parseInt(e.target.value, 10);
+                                handleApplyLuminanceMask(selectedAnn.id, th);
+                              }}
+                              className="setting-slider"
+                              style={{ width: 90 }}
+                            />
+                            <span style={{ fontSize: '11px' }}>{selectedAnn.threshold || 120}</span>
+                          </div>
+                          <button
+                            className="btn-secondary"
+                            style={{ fontSize: '11px', padding: '4px 8px' }}
+                            onClick={() => handleRevertToMultiplyBlend(selectedAnn.id)}
+                          >
+                            Chuyển về Multiply Vector
+                          </button>
+                        </>
+                      ) : (
+                        <button
+                          className="btn-secondary"
+                          style={{ fontSize: '11px', padding: '4px 8px' }}
+                          onClick={() => handleApplyLuminanceMask(selectedAnn.id, 120)}
+                          title="Quét từng pixel và chỉ nhuộm nền giấy L >= 120, giữ nguyên chữ đen 100%"
+                        >
+                          Chuyển sang lọc ngưỡng Pixel
+                        </button>
+                      )}
+
+                      <button
+                        className="btn-secondary"
+                        style={{ fontSize: '11px', padding: '4px 8px' }}
+                        onClick={() => handleReorderQuadPoints(selectedAnn.id)}
+                        title="Tự động sửa thứ tự 4 góc theo hình tứ giác lồi chuẩn A-B-C-D"
+                      >
+                        Căn chuẩn thứ tự 4 góc (A-B-C-D)
+                      </button>
                     </div>
                   )}
 
@@ -1541,11 +2290,9 @@ export default function App() {
                       key={ann.id} 
                       className={`annotation-item ${ann.id === selectedAnnId ? 'selected' : ''}`}
                       onClick={() => {
-                        if (showAnnotationFrames) {
-                          setSelectedAnnId(ann.id);
-                        }
+                        setSelectedAnnId(ann.id);
                       }}
-                      style={{ cursor: showAnnotationFrames ? 'pointer' : 'default' }}
+                      style={{ cursor: 'pointer' }}
                     >
                       <div className="annotation-item-info">
                         {ann.type === 'highlight' && (
@@ -1554,10 +2301,22 @@ export default function App() {
                             <span className="annotation-type-badge">H.Light Trộn #{aIdx + 1}</span>
                           </>
                         )}
+                        {ann.type === 'text-highlight' && (
+                          <>
+                            <div className="annotation-color-dot" style={{ backgroundColor: ann.color || '#EFDE05' }} />
+                            <span className="annotation-type-badge">H.Light Rõ Chữ #{aIdx + 1}</span>
+                          </>
+                        )}
                         {ann.type === 'solid-highlight' && (
                           <>
                             <div className="annotation-color-dot" style={{ backgroundColor: ann.color || '#EFDE05' }} />
                             <span className="annotation-type-badge">H.Light Đè #{aIdx + 1}</span>
+                          </>
+                        )}
+                        {ann.type === 'quad-highlight' && (
+                          <>
+                            <div className="annotation-color-dot" style={{ backgroundColor: ann.color || '#FFF176' }} />
+                            <span className="annotation-type-badge">Quad #{aIdx + 1}</span>
                           </>
                         )}
                         {ann.type === 'solid-erase' && (
@@ -1574,19 +2333,17 @@ export default function App() {
                         )}
                       </div>
                       
-                      {showAnnotationFrames && (
-                        <button 
-                          className="annotation-delete-btn" 
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            deleteAnnotation(currentPage.id, ann.id);
-                            showToast('Đã xóa nét sửa.', 'info');
-                          }}
-                          title="Xóa"
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      )}
+                      <button 
+                        className="annotation-delete-btn" 
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          deleteAnnotation(currentPage.id, ann.id);
+                          showToast('Đã xóa nét sửa.', 'info');
+                        }}
+                        title="Xóa nét sửa này"
+                      >
+                        <Trash2 size={14} />
+                      </button>
                     </div>
                   ))
                 ) : (
