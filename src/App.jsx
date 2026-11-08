@@ -181,6 +181,9 @@ export default function App() {
   const [quadOpacity, setQuadOpacity] = useState(0.65); // Default opacity
   const [quadBlendMode, setQuadBlendMode] = useState('multiply'); // 'multiply' | 'luminance'
   const [quadThreshold, setQuadThreshold] = useState(120); // Default luminance threshold
+  const [quadBoldenText, setQuadBoldenText] = useState(false); // Bật/Tắt tô đậm chữ & nét khác màu bên trong
+  const [quadDarkenStrength, setQuadDarkenStrength] = useState(0.7); // Mức độ tô đậm nét chữ
+  const [quadThickenStroke, setQuadThickenStroke] = useState(true); // In đậm / Làm dày nét
   const [quadPointsInProgress, setQuadPointsInProgress] = useState([]); // Array of 0 to 3 points {x, y}
   const [currentMousePos, setCurrentMousePos] = useState({ x: 0, y: 0 });
   
@@ -662,6 +665,11 @@ export default function App() {
       window.removeEventListener('mousemove', onMouseMove);
       window.removeEventListener('mouseup', onMouseUp);
       saveToHistory();
+      // If boldenText or luminance mode is active, refresh the patch mask with new coordinates
+      const currentAnn = currentPage?.annotations.find(a => a.id === annId);
+      if (currentAnn && (currentAnn.boldenText || currentAnn.blendMode === 'luminance')) {
+        refreshQuadMask(annId);
+      }
     };
 
     window.addEventListener('mousemove', onMouseMove);
@@ -723,10 +731,91 @@ export default function App() {
       window.removeEventListener('mousemove', onMouseMove);
       window.removeEventListener('mouseup', onMouseUp);
       saveToHistory();
+      const currentAnn = currentPage?.annotations.find(a => a.id === annId);
+      if (currentAnn && (currentAnn.boldenText || currentAnn.blendMode === 'luminance')) {
+        refreshQuadMask(annId);
+      }
     };
 
     window.addEventListener('mousemove', onMouseMove);
     window.addEventListener('mouseup', onMouseUp);
+  };
+
+  // Helper to re-render the luminance / boldenText mask patch
+  const refreshQuadMask = (annId, pointsToUse = null, overrideProps = {}) => {
+    const ann = currentPage?.annotations.find(a => a.id === annId);
+    if (!ann || !editorCanvasRef.current || !editorViewport) return;
+
+    const points = pointsToUse || ann.points;
+    if (!points || points.length < 4) return;
+
+    const bolden = overrideProps.boldenText !== undefined ? overrideProps.boldenText : !!ann.boldenText;
+    const isLuminance = overrideProps.blendMode ? overrideProps.blendMode === 'luminance' : ann.blendMode === 'luminance';
+
+    if (!bolden && !isLuminance) {
+      setPages(prevPages => prevPages.map(p => {
+        if (p.id === currentPageId) {
+          return {
+            ...p,
+            annotations: p.annotations.map(a => a.id === annId ? { ...a, imageSrc: null, ...overrideProps } : a)
+          };
+        }
+        return p;
+      }));
+      return;
+    }
+
+    const screenPoints = points.map(pt => {
+      const sp = editorViewport.convertToViewportPoint(pt.x, pt.y);
+      return { x: sp[0], y: sp[1] };
+    });
+
+    const maskResult = applyLuminanceMask(
+      editorCanvasRef.current,
+      screenPoints,
+      overrideProps.color || ann.color || quadHighlightColor,
+      overrideProps.threshold !== undefined ? overrideProps.threshold : (ann.threshold || quadThreshold),
+      overrideProps.opacity !== undefined ? overrideProps.opacity : (ann.opacity !== undefined ? ann.opacity : quadOpacity),
+      {
+        boldenText: bolden,
+        darkenStrength: overrideProps.darkenStrength !== undefined ? overrideProps.darkenStrength : (ann.darkenStrength !== undefined ? ann.darkenStrength : 0.7),
+        thickenStroke: overrideProps.thickenStroke !== undefined ? overrideProps.thickenStroke : (ann.thickenStroke !== false)
+      }
+    );
+
+    if (maskResult) {
+      setPages(prevPages => prevPages.map(p => {
+        if (p.id === currentPageId) {
+          return {
+            ...p,
+            annotations: p.annotations.map(a => a.id === annId ? { ...a, imageSrc: maskResult.dataUrl, ...overrideProps } : a)
+          };
+        }
+        return p;
+      }));
+    }
+  };
+
+  // Toggle boldenText on selected Quad annotation
+  const handleToggleBoldenText = (annId) => {
+    const ann = currentPage?.annotations.find(a => a.id === annId);
+    if (!ann) return;
+    saveToHistory();
+    const nextVal = !ann.boldenText;
+    refreshQuadMask(annId, null, { boldenText: nextVal });
+    showToast(nextVal ? 'Đã bật: Tô đậm nét chữ & màu khác bên trong vùng highlight!' : 'Đã tắt tô đậm nét chữ.', 'info');
+  };
+
+  // Update darken strength (mức độ tô đậm)
+  const handleUpdateDarkenStrength = (annId, newStrength) => {
+    refreshQuadMask(annId, null, { darkenStrength: newStrength });
+  };
+
+  // Toggle thicken stroke (in đậm nét chữ)
+  const handleToggleThickenStroke = (annId, checked) => {
+    saveToHistory();
+    refreshQuadMask(annId, null, { thickenStroke: checked });
+    showToast(checked ? 'Đã bật làm dày nét chữ.' : 'Đã tắt làm dày nét chữ.', 'info');
   };
 
   // Auto reorder quad points into standard convex order
@@ -753,45 +842,9 @@ export default function App() {
 
   // Run pixel luminance masking for Quad Highlight (Algorithm Option 2)
   const handleApplyLuminanceMask = (annId, threshold = 120) => {
-    const ann = currentPage?.annotations.find(a => a.id === annId);
-    if (!ann || !ann.points || !editorCanvasRef.current || !editorViewport) return;
-
-    const screenPoints = ann.points.map(pt => {
-      const sp = editorViewport.convertToViewportPoint(pt.x, pt.y);
-      return { x: sp[0], y: sp[1] };
-    });
-
-    const maskResult = applyLuminanceMask(
-      editorCanvasRef.current,
-      screenPoints,
-      ann.color || quadHighlightColor,
-      threshold,
-      ann.opacity !== undefined ? ann.opacity : quadOpacity
-    );
-
-    if (maskResult) {
-      saveToHistory();
-      setPages(prevPages => prevPages.map(p => {
-        if (p.id === currentPageId) {
-          return {
-            ...p,
-            annotations: p.annotations.map(a => {
-              if (a.id === annId) {
-                return {
-                  ...a,
-                  blendMode: 'luminance',
-                  threshold,
-                  imageSrc: maskResult.dataUrl
-                };
-              }
-              return a;
-            })
-          };
-        }
-        return p;
-      }));
-      showToast('Đã áp dụng quét pixel lọc ngưỡng Luminance (giữ chữ đen)!', 'success');
-    }
+    saveToHistory();
+    refreshQuadMask(annId, null, { blendMode: 'luminance', threshold });
+    showToast('Đã áp dụng quét pixel lọc ngưỡng Luminance (giữ chữ đen)!', 'success');
   };
 
   // Revert back to real-time Multiply Vector blend mode
@@ -806,7 +859,7 @@ export default function App() {
               return {
                 ...a,
                 blendMode: 'multiply',
-                imageSrc: null
+                imageSrc: a.boldenText ? a.imageSrc : null
               };
             }
             return a;
@@ -862,13 +915,18 @@ export default function App() {
         const bounds = getPointsBounds(pdfPoints);
 
         let initialImageSrc = null;
-        if (quadBlendMode === 'luminance' && editorCanvasRef.current) {
+        if ((quadBlendMode === 'luminance' || quadBoldenText) && editorCanvasRef.current) {
           const maskResult = applyLuminanceMask(
             editorCanvasRef.current,
             ordered,
             quadHighlightColor,
             quadThreshold,
-            quadOpacity
+            quadOpacity,
+            {
+              boldenText: quadBoldenText,
+              darkenStrength: quadDarkenStrength,
+              thickenStroke: quadThickenStroke
+            }
           );
           if (maskResult) {
             initialImageSrc = maskResult.dataUrl;
@@ -889,7 +947,10 @@ export default function App() {
             points: pdfPoints,
             opacity: quadOpacity,
             blendMode: quadBlendMode,
-            threshold: quadThreshold
+            threshold: quadThreshold,
+            boldenText: quadBoldenText,
+            darkenStrength: quadDarkenStrength,
+            thickenStroke: quadThickenStroke
           }
         ).then(newAnnId => {
           if (newAnnId) setSelectedAnnId(newAnnId);
@@ -1698,6 +1759,51 @@ export default function App() {
                       </div>
                     )}
                   </div>
+
+                  <div className="toolbar-divider"></div>
+                  <div className="toolbar-group">
+                    <button
+                      className={`tool-btn-labeled ${quadBoldenText ? 'active' : ''}`}
+                      style={{
+                        height: 32,
+                        fontSize: 12,
+                        padding: '0 10px',
+                        ...(quadBoldenText ? { background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)', borderColor: '#10b981', color: '#fff' } : {})
+                      }}
+                      onClick={() => setQuadBoldenText(!quadBoldenText)}
+                      title="Bật/Tắt: Tô đậm nét chữ và phần khác màu highlight bên trong vùng tứ giác"
+                    >
+                      <span style={{ fontWeight: 800, fontSize: 13, marginRight: 2 }}>B</span>
+                      Tô đậm chữ: {quadBoldenText ? 'BẬT' : 'TẮT'}
+                    </button>
+                    {quadBoldenText && (
+                      <>
+                        <div className="setting-slider-row" style={{ width: 105, marginLeft: 4 }} title="Mức độ tô đậm nét chữ">
+                          <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Đậm:</span>
+                          <input 
+                            type="range"
+                            min="0.3"
+                            max="1.0"
+                            step="0.05"
+                            value={quadDarkenStrength}
+                            onChange={(e) => setQuadDarkenStrength(parseFloat(e.target.value))}
+                            className="setting-slider"
+                          />
+                          <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
+                            {Math.round(quadDarkenStrength * 100)}%
+                          </span>
+                        </div>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', cursor: 'pointer', color: 'var(--text-secondary)', marginLeft: 4 }} title="Làm dày viền nét (in đậm chữ)">
+                          <input
+                            type="checkbox"
+                            checked={quadThickenStroke}
+                            onChange={(e) => setQuadThickenStroke(e.target.checked)}
+                          />
+                          <span>Dày nét</span>
+                        </label>
+                      </>
+                    )}
+                  </div>
                 </>
               )}
 
@@ -2245,9 +2351,57 @@ export default function App() {
                         </button>
                       )}
 
+                      <div style={{ marginTop: '4px', paddingTop: '8px', borderTop: '1px solid rgba(255, 255, 255, 0.1)' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                          <span style={{ fontSize: '12px', fontWeight: 600 }}>Tô đậm chữ/nét bên trong:</span>
+                          <button
+                            className={`tool-btn-labeled ${selectedAnn.boldenText ? 'active' : ''}`}
+                            style={{
+                              height: 26,
+                              fontSize: 11,
+                              padding: '0 8px',
+                              ...(selectedAnn.boldenText ? { background: '#10b981', borderColor: '#10b981', color: '#fff' } : {})
+                            }}
+                            onClick={() => handleToggleBoldenText(selectedAnn.id)}
+                            title="Tô đậm chữ và các chi tiết có màu khác màu highlight bên trong tứ giác"
+                          >
+                            {selectedAnn.boldenText ? 'Đang BẬT' : 'Đang TẮT'}
+                          </button>
+                        </div>
+
+                        {selectedAnn.boldenText && (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginTop: '8px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '6px' }}>
+                              <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Mức độ đậm chữ:</span>
+                              <input
+                                type="range"
+                                min="0.3"
+                                max="1.0"
+                                step="0.05"
+                                value={selectedAnn.darkenStrength !== undefined ? selectedAnn.darkenStrength : 0.7}
+                                onChange={(e) => handleUpdateDarkenStrength(selectedAnn.id, parseFloat(e.target.value))}
+                                className="setting-slider"
+                                style={{ width: 85 }}
+                              />
+                              <span style={{ fontSize: '11px', minWidth: 26 }}>
+                                {Math.round((selectedAnn.darkenStrength !== undefined ? selectedAnn.darkenStrength : 0.7) * 100)}%
+                              </span>
+                            </div>
+                            <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', cursor: 'pointer', color: 'var(--text-secondary)' }}>
+                              <input
+                                type="checkbox"
+                                checked={selectedAnn.thickenStroke !== false}
+                                onChange={(e) => handleToggleThickenStroke(selectedAnn.id, e.target.checked)}
+                              />
+                              <span>In đậm nét chữ (Làm dày viền nét)</span>
+                            </label>
+                          </div>
+                        )}
+                      </div>
+
                       <button
                         className="btn-secondary"
-                        style={{ fontSize: '11px', padding: '4px 8px' }}
+                        style={{ fontSize: '11px', padding: '4px 8px', marginTop: '4px' }}
                         onClick={() => handleReorderQuadPoints(selectedAnn.id)}
                         title="Tự động sửa thứ tự 4 góc theo hình tứ giác lồi chuẩn A-B-C-D"
                       >

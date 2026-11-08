@@ -125,7 +125,9 @@ export function orderQuadPoints(points) {
  * Pixel manipulation & Luminance Masking (Algorithm Option 2):
  * Scans each pixel (R, G, B) inside the quadrilateral on the source canvas.
  * - Computes luminance: L = 0.299R + 0.587G + 0.114B
- * - If L < threshold (black/dark ink text): Keeps original black ink untouched
+ * - If L < threshold (black/dark ink text or content of other colors):
+ *   + If boldenText is ON: Deepens and bolds the ink/text (tô đậm nó) and optionally thickens strokes.
+ *   + If boldenText is OFF: Keeps original ink untouched.
  * - If L >= threshold (white/light paper background): Blends highlight color
  * 
  * @param {HTMLCanvasElement} canvas - Underlying editor canvas
@@ -133,9 +135,23 @@ export function orderQuadPoints(points) {
  * @param {string} hexColor - Highlight color (e.g. #FFFF00)
  * @param {number} threshold - Luminance threshold (0-255, default ~120)
  * @param {number} opacity - Blend opacity (0-1, default 0.7)
+ * @param {object} options - Options { boldenText, darkenStrength, thickenStroke }
  * @returns {{ dataUrl: string, rect: { x: number, y: number, w: number, h: number } } | null}
  */
-export function applyLuminanceMask(canvas, points, hexColor = '#FFFF00', threshold = 120, opacity = 0.7) {
+export function applyLuminanceMask(
+  canvas, 
+  points, 
+  hexColor = '#FFFF00', 
+  threshold = 120, 
+  opacity = 0.7,
+  options = {}
+) {
+  const {
+    boldenText = false,
+    darkenStrength = 0.7,
+    thickenStroke = true
+  } = options;
+
   if (!canvas || !points || points.length < 4) return null;
 
   const ctx = canvas.getContext('2d');
@@ -175,34 +191,97 @@ export function applyLuminanceMask(canvas, points, hexColor = '#FFFF00', thresho
   // Local points relative to bounding box
   const localPoints = points.map(p => ({ x: p.x - minX, y: p.y - minY }));
 
+  // Step 1: Pre-classify pixels inside the quad into ink vs paper
+  const isInside = new Uint8Array(width * height);
+  const isInk = new Uint8Array(width * height);
+
   for (let py = 0; py < height; py++) {
     for (let px = 0; px < width; px++) {
-      const idx = (py * width + px) * 4;
-
-      // Check if pixel is within the 4-point quadrilateral
-      if (!isPointInPolygon({ x: px, y: py }, localPoints)) {
-        continue; // Leave alpha 0 (transparent outside polygon)
+      const pIdx = py * width + px;
+      if (isPointInPolygon({ x: px, y: py }, localPoints)) {
+        isInside[pIdx] = 1;
+        const idx = pIdx * 4;
+        const r = pixels[idx];
+        const g = pixels[idx + 1];
+        const b = pixels[idx + 2];
+        const a = pixels[idx + 3];
+        if (a > 0) {
+          const lum = 0.299 * r + 0.587 * g + 0.114 * b;
+          if (lum < threshold) {
+            isInk[pIdx] = 1;
+          }
+        }
       }
+    }
+  }
 
+  // Step 2: If boldenText and thickenStroke, compute dilated ink mask (expand by 1 pixel)
+  const isDilatedInk = new Uint8Array(width * height);
+  if (boldenText && thickenStroke) {
+    for (let py = 0; py < height; py++) {
+      for (let px = 0; px < width; px++) {
+        const pIdx = py * width + px;
+        if (!isInside[pIdx]) continue;
+        if (isInk[pIdx]) {
+          isDilatedInk[pIdx] = 2; // Original ink pixel
+        } else {
+          // Check 4-connected neighbors for dark ink
+          const up = py > 0 ? isInk[(py - 1) * width + px] : 0;
+          const down = py < height - 1 ? isInk[(py + 1) * width + px] : 0;
+          const left = px > 0 ? isInk[py * width + (px - 1)] : 0;
+          const right = px < width - 1 ? isInk[py * width + (px + 1)] : 0;
+          if (up || down || left || right) {
+            isDilatedInk[pIdx] = 1; // Expanded border stroke
+          }
+        }
+      }
+    }
+  } else if (boldenText) {
+    for (let i = 0; i < isInk.length; i++) {
+      if (isInk[i]) isDilatedInk[i] = 2;
+    }
+  }
+
+  // Step 3: Colorize pixels
+  for (let py = 0; py < height; py++) {
+    for (let px = 0; px < width; px++) {
+      const pIdx = py * width + px;
+      if (!isInside[pIdx]) continue;
+
+      const idx = pIdx * 4;
       const r = pixels[idx];
       const g = pixels[idx + 1];
       const b = pixels[idx + 2];
       const a = pixels[idx + 3];
-
       if (a === 0) continue;
 
-      // Luminance formula
-      const lum = 0.299 * r + 0.587 * g + 0.114 * b;
+      const inkType = isDilatedInk[pIdx];
 
-      if (lum < threshold) {
-        // Dark ink: preserve 100% original dark ink without fading
+      if (boldenText && inkType > 0) {
+        // Pixel is text/ink or thickened stroke: TÔ ĐẬM NÓ!
+        if (inkType === 2) {
+          // Original ink pixel: deepen color and boost contrast
+          const factor = Math.max(0, 1 - darkenStrength * 0.85);
+          outPixels[idx] = Math.round(r * factor);
+          outPixels[idx + 1] = Math.round(g * factor);
+          outPixels[idx + 2] = Math.round(b * factor);
+          outPixels[idx + 3] = 255;
+        } else {
+          // Thickened border stroke pixel: blend dark ink onto border
+          const darkTone = 25; // Deep crisp black
+          outPixels[idx] = darkTone;
+          outPixels[idx + 1] = darkTone;
+          outPixels[idx + 2] = darkTone;
+          outPixels[idx + 3] = 255;
+        }
+      } else if (!boldenText && isInk[pIdx]) {
+        // Original text without boldening: preserve 100% original ink
         outPixels[idx] = r;
         outPixels[idx + 1] = g;
         outPixels[idx + 2] = b;
         outPixels[idx + 3] = a;
       } else {
-        // Paper background: dye with highlight color using multiply blending
-        // Multiply: C_out = C_orig * C_hl / 255
+        // Paper background (L >= threshold): dye with highlight color
         const mulR = (r * hR) / 255;
         const mulG = (g * hG) / 255;
         const mulB = (b * hB) / 255;
